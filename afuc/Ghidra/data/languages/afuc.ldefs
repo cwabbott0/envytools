@@ -1,0 +1,26 @@
+<?xml version="1.0"?>
+
+<language_definitions>
+  <language processor="adreno 5xx/6xx microcode"
+            endian="little"
+            size="64"
+            variant="A6XX"
+            version="0.1"
+            slafile="afuc6.sla"
+            processorspec="afuc.pspec"
+            id="afuc:le:64:6xx">
+    <description>Adreno 6xx microcode</description>
+    <compiler name="default" spec="afuc.cspec" id="default"/>
+  </language>
+  <language processor="adreno 5xx/6xx microcode"
+            endian="little"
+            size="64"
+            variant="A5XX"
+            version="0.1"
+            slafile="afuc5.sla"
+            processorspec="afuc.pspec"
+            id="afuc:le:64:5xx">
+    <description>Adreno 5xx microcode</description>
+    <compiler name="default" spec="afuc.cspec" id="default"/>
+  </language>
+</language_definitions>

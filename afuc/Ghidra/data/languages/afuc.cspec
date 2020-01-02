@@ -1,0 +1,173 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<compiler_spec>
+  <global>
+    <range space="ram"/>
+    <range space="gpu_register"/>
+    <range space="control_register"/>
+    <range space="specialregs"/>
+    <register name="r12"/> <!-- IB level -->
+    <register name="r13"/> <!-- unknown, but global -->
+    <register name="r14"/> <!-- various flags -->
+    <register name="r15"/> <!-- used by CP_INDIRECT_BUFFER, CP_DRAW_INDX -->
+    <register name="r16"/> <!-- used together with r15? -->
+    <register name="r17"/>
+    <register name="r1b"/> <!-- only used in interrupt routine -->
+  </global>
+  <stackpointer register="sp" space="retaddrs" growth="positive"/>
+  <data_organization>
+    <default_pointer_alignment value="4"/>
+    <machine_alignment value="4"/>
+    <default_alignment value="4"/>
+    <integer_size value="4"/>
+    <long_size value="8"/>
+  </data_organization>
+  <nohighptr>
+    <range space="control_register" first="0x0" last="0x3ff"/>
+  </nohighptr>
+  <default_proto>
+    <prototype name="__stdcall" extrapop="-4" stackshift="-4" strategy="register">
+      <input>
+        <pentry minsize="1" maxsize="4">
+          <register name="r01"/>
+        </pentry>
+        <pentry minsize="1" maxsize="4">
+          <register name="r02"/>
+        </pentry>
+        <pentry minsize="1" maxsize="4">
+          <register name="r03"/>
+        </pentry>
+        <pentry minsize="1" maxsize="4">
+          <register name="r04"/>
+        </pentry>
+        <pentry minsize="1" maxsize="4">
+          <register name="r05"/>
+        </pentry>
+        <pentry minsize="1" maxsize="4">
+          <register name="r06"/>
+        </pentry>
+        <pentry minsize="1" maxsize="4">
+          <register name="r07"/>
+        </pentry>
+        <pentry minsize="1" maxsize="4">
+          <register name="r08"/>
+        </pentry>
+        <pentry minsize="1" maxsize="4">
+          <register name="r09"/>
+        </pentry>
+        <pentry minsize="1" maxsize="4">
+          <register name="r0a"/>
+        </pentry>
+        <pentry minsize="1" maxsize="4">
+          <register name="r0b"/>
+        </pentry>
+        <pentry minsize="1" maxsize="4">
+          <register name="r0c"/>
+        </pentry>
+        <pentry minsize="1" maxsize="4">
+          <register name="r0d"/>
+        </pentry>
+        <pentry minsize="1" maxsize="4">
+          <register name="r0e"/>
+        </pentry>
+        <pentry minsize="1" maxsize="4">
+          <register name="r0f"/>
+        </pentry>
+        <pentry minsize="1" maxsize="4">
+          <register name="r10"/>
+        </pentry>
+        <pentry minsize="1" maxsize="4">
+          <register name="r11"/>
+        </pentry>
+        <!-- r12 and beyond are global or scratch registers -->
+        <pentry minsize="8" maxsize="8">
+          <register name="MEM_READ_ADDR"/>
+        </pentry>
+        <pentry minsize="4" maxsize="4">
+          <register name="REG_WRITE_ADDR"/>
+        </pentry>
+        <pentry minsize="4" maxsize="4">
+          <register name="REG_READ_ADDR"/>
+        </pentry>
+        <pentry minsize="4" maxsize="4">
+          <register name="LOAD_STORE_HI"/>
+        </pentry>
+      </input>
+      <output>
+        <pentry minsize="1" maxsize="4">
+          <register name="r01"/>
+        </pentry>
+        <pentry minsize="1" maxsize="4">
+          <register name="r02"/>
+        </pentry>
+        <pentry minsize="1" maxsize="4">
+          <register name="r03"/>
+        </pentry>
+        <pentry minsize="1" maxsize="4">
+          <register name="r04"/>
+        </pentry>
+        <pentry minsize="1" maxsize="4">
+          <register name="r05"/>
+        </pentry>
+        <pentry minsize="1" maxsize="4">
+          <register name="r06"/>
+        </pentry>
+        <pentry minsize="1" maxsize="4">
+          <register name="r07"/>
+        </pentry>
+        <pentry minsize="1" maxsize="4">
+          <register name="r08"/>
+        </pentry>
+        <pentry minsize="1" maxsize="4">
+          <register name="r09"/>
+        </pentry>
+        <pentry minsize="1" maxsize="4">
+          <register name="r0a"/>
+        </pentry>
+        <pentry minsize="1" maxsize="4">
+          <register name="r0b"/>
+        </pentry>
+        <pentry minsize="1" maxsize="4">
+          <register name="r0c"/>
+        </pentry>
+        <pentry minsize="1" maxsize="4">
+          <register name="r0d"/>
+        </pentry>
+        <pentry minsize="1" maxsize="4">
+          <register name="r0e"/>
+        </pentry>
+        <pentry minsize="1" maxsize="4">
+          <register name="r0f"/>
+        </pentry>
+        <pentry minsize="1" maxsize="4">
+          <register name="r10"/>
+        </pentry>
+        <pentry minsize="1" maxsize="4">
+          <register name="r11"/>
+        </pentry>
+      </output>
+      <unaffected>
+        <register name="sp"/>
+      </unaffected>
+    </prototype>
+  </default_proto>
+  <!-- prototype for packet handlers -->
+  <prototype name="__pkt" extrapop="0" stackshift="0" strategy="register">
+    <input>
+      <pentry minsize="4" maxsize="4">
+        <register name="r01"/>
+      </pentry>
+      <pentry minsize="8" maxsize="8">
+        <register name="curpacketptr"/>
+      </pentry>
+    </input>
+    <output>
+      <pentry minsize="4" maxsize="4">
+        <register name="r01"/>
+      </pentry>
+    </output>
+    <unaffected>
+      <register name="sp"/>
+    </unaffected>
+  </prototype>
+</compiler_spec>

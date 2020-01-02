@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<processor_spec>
+
+  <programcounter register="pc"/>
+  
+  <volatile outputop="write_volatile" inputop="read_volatile">
+    <!--
+      Control registers 0x00-0xFF are special registers that control the HW in
+      various ways, however some of them are known to be "normal" registers that
+      only do something special when another register is written or whose
+      behavior is entirely modeled in the SLEIGH processor model and hence can
+      be ignored:
+      - MEM_READ_ADDR/DWORDS (0x18-0x1a)
+      - REG_WRITE_ADDR (0x024)
+      - REG_READ_DWORDS/REG_READ_ADDR (0x26-0x27)
+      - LOAD_STORE_HI (0x58)
+    -->
+    <range space="control_register" first="0x0" last="0x5f"/>
+    <range space="control_register" first="0x6c" last="0x8f"/>
+    <range space="control_register" first="0x94" last="0x97"/>
+    <range space="control_register" first="0xa0" last="0x15f"/>
+    <range space="control_register" first="0x164" last="0x3ff"/>
+      <!--
+        even though it's a normal register, this is involved in notifying the
+        preemption routine what to do, so volatile is needed for writes to it to
+        come before writes to PREEMPT_CP_TRIGGER.
+      -->
+    <range space="control_register" first="0x494" last="0x497"/>
+
+    <range space="specialregs"/>
+    <range space="gpu_register"/>
+  </volatile>
+
+  <default_memory_blocks>
+    <memory_block name="control_regs" start_address="control_register:0x0" length="0x800" initialized="false"/>
+    <memory_block name="gpu_regs" start_address="gpu_register:0x0" length="0x100000" initialized="false"/>
+  </default_memory_blocks>
+  
+</processor_spec>

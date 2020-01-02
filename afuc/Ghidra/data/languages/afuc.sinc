@@ -1,0 +1,689 @@
+define endian=little;
+
+# normal CPU-visible RAM
+define space ram type=ram_space size=8 default;
+# space for externally-visible registers that control other units
+define space gpu_register type=ram_space size=4 wordsize=4;
+# CP-internal registers, accessed via cread/cwrite
+define space control_register type=ram_space size=2 wordsize=4;
+# internal space for return addresses
+# TODO: this is probably actually part of the control register space
+define space retaddrs type=ram_space size=4;
+# ghidra doesn't support volatile registers, so workaround it by adding a
+# volatile address space for writes to $data, $addr, and $addr2
+define space specialregs type=ram_space size=1;
+# work registers (e.g. $03)
+define space register type=register_space size=4;
+
+define register offset=0 size=4 [
+  r00 r01 r02 r03 r04 r05 r06 r07
+  r08 r09 r0a r0b r0c r0d r0e r0f
+  r10 r11 r12 r13 r14 r15 r16 r17
+  r18 r19 r1a r1b rem
+];
+
+define specialregs offset=0 size=4 [
+ addr addr2 data
+];
+
+# internal/fake registers
+
+define register offset=0x100 size=4 [
+  sp # TODO: the stack pointer is probably actually a control register
+  pc # This probably isn't exposed directly
+  flags # used so far for add/addhi overflow bit (probably also a control reg)
+  curdataptr_lo
+  curdataptr_hi
+];
+
+define register offset=0x110 size=8 [
+  # This is a fake register that points to the data about to be read by $data.
+  # It is marked as an argument to pkt7 entrypoints to make the decompilation
+  # look nice. In reality the HW reads and advances different RB/IB1/IB2/draw
+  # state control registers based on the IB_LEVEL control reg.
+  curpacketptr
+  # Fake register used to track $addr and (rep) state.
+  decodestate
+];
+
+@if VERSION == "6"
+define control_register offset=0x60 size=8 [ MEM_READ_ADDR ];
+define control_register offset=0x90 size=4 [ REG_WRITE_ADDR REG_WRITE ];
+define control_register offset=0x9c size=4 [ REG_READ_ADDR ];
+define control_register offset=0x160 size=4 [ LOAD_STORE_HI ];
+@else
+define control_register offset=0x2e0 size=4 [ REG_READ_ADDR ];
+@endif
+
+define context decodestate
+  # Used to disable incrementing rem when data is read in a (rep) instruction
+  isrepinstr = (0, 0)
+  # Used to avoid generating direct writes to $addr and $data when we know what
+  # the addr-writes and data-writes do
+  addrknown = (1, 1)
+  alu_op = (2, 6)
+  knownaddr = (32, 63)
+  knownaddr_hi = (32, 46)
+;
+
+define token instr(32)
+  alu_uimm = (0, 15) hex
+  movi_shift = (21, 25)
+
+  alu_2src_op = (0, 4)
+  alu_2src_pad = (5, 10)
+  alu_2src_dst = (11, 15)
+  alu_2src_src2 = (16, 20)
+
+  # ALU src1, branch condition source, control address offset
+  src1 = (21, 25)
+
+  control_imm = (0, 11) hex
+  control_flags = (12, 15) hex
+  control_data_src = (16, 20)
+
+  # shared dst field for control and ALU immediate instrs
+  alui_control_dst = (16, 20)
+
+  branch_ioff = (0, 15) signed
+  branch_bit = (16, 20) dec
+  branch_imm = (16, 20)
+
+  call_off = (0, 25)
+
+  pad = (0, 25) hex
+
+  opc_r = (26, 31)
+  opc = (27, 31)
+  rep = (26, 26)
+;
+
+attach variables [
+  alui_control_dst src1
+  alu_2src_dst alu_2src_src2
+  control_data_src
+] [
+  r00 r01 r02 r03 r04 r05 r06 r07
+  r08 r09 r0a r0b r0c r0d r0e r0f
+  r10 r11 r12 r13 r14 r15 r16 r17
+  r18 r19 r1a r1b rem addr addr2 data
+];
+
+macro writedataptr(curdataptr) {
+  curdataptr = zext(curdataptr_hi) << 32 | zext(curdataptr_lo);
+  local newcurdataptr = curdataptr + 1;
+  curdataptr_lo = newcurdataptr[0,32];
+  curdataptr_hi = newcurdataptr[32,32];
+}
+
+# -- Destinations ---
+
+# writes to $data where it's known what the writes are doing
+
+ALUICNTLDST: alui_control_dst is alui_control_dst & alui_control_dst = 0x1f & addrknown = 1 & knownaddr_hi = 0 & knownaddr {
+  local reg:4 = knownaddr;
+  export *[gpu_register]:4 reg;
+}
+
+ALUICNTLDST: alui_control_dst is alui_control_dst & alui_control_dst = 0x1f & addrknown = 1 & knownaddr = 0xa0000000 [ knownaddr = 0xa1000000; globalset(inst_next, knownaddr); ] {
+  export curdataptr_lo;
+}
+
+ALUICNTLDST: alui_control_dst is alui_control_dst & alui_control_dst = 0x1f & addrknown = 1 & knownaddr = 0xa1000000 {
+  export curdataptr_hi;
+}
+
+ALUICNTLDST: alui_control_dst is alui_control_dst & alui_control_dst = 0x1f & addrknown = 1 & 
+ (knownaddr = 0xa200000 | knownaddr = 0xa2040000) {
+  local curdataptr:8;
+  writedataptr(curdataptr);
+  export *[ram]:4 curdataptr;
+}
+
+# generic writes to $data, $addr, and $addr2
+
+ALUICNTLDST: alui_control_dst is alui_control_dst & alui_control_dst = 0x1d [ addrknown = 0; globalset(inst_next, addrknown); ] {
+  local ptr:1 = 0;
+  export *[specialregs]:4 ptr;
+}
+
+# after writing to $addr2, writing to $data no longer has a known meaning so
+# set addrknown back to 0
+ALUICNTLDST: alui_control_dst is alui_control_dst & alui_control_dst = 0x1e [ addrknown = 0; globalset(inst_next, addrknown); ] {
+  local ptr:1 = 4;
+  export *[specialregs]:4 ptr;
+}
+
+ALUICNTLDST: alui_control_dst is alui_control_dst & alui_control_dst = 0x1f & addrknown = 0 {
+  local ptr:1 = 8;
+  export *[specialregs]:4 ptr;
+}
+
+ALUICNTLDST: alui_control_dst is alui_control_dst {
+  export alui_control_dst;
+}
+
+# unfortunately, due to how SLEIGH works we have to copy all of these
+# definitions for 2-src dest which has a different bit-location for the
+# destination
+
+TWOSRCDST: alu_2src_dst is alu_2src_dst & alu_2src_dst = 0x1f & addrknown = 1 & knownaddr_hi = 0 & knownaddr {
+  local reg:4 = knownaddr;
+  export *[gpu_register]:4 reg;
+}
+
+TWOSRCDST: alu_2src_dst is alu_2src_dst & alu_2src_dst = 0x1f & addrknown = 1 & knownaddr = 0xa0000000 [ knownaddr = 0xa1000000; globalset(inst_next, knownaddr); ] {
+  export curdataptr_lo;
+}
+
+TWOSRCDST: alu_2src_dst is alu_2src_dst & alu_2src_dst = 0x1f & addrknown = 1 & knownaddr = 0xa1000000 {
+  export curdataptr_hi;
+}
+
+TWOSRCDST: alu_2src_dst is alu_2src_dst & alu_2src_dst = 0x1f & addrknown = 1 & 
+ (knownaddr = 0xa200000 | knownaddr = 0xa2040000) {
+  local curdataptr:8;
+  writedataptr(curdataptr);
+  export *[ram]:4 curdataptr;
+}
+
+TWOSRCDST: alu_2src_dst is alu_2src_dst & alu_2src_dst = 0x1d [ addrknown = 0; globalset(inst_next, addrknown); ] {
+  local ptr:1 = 0;
+  export *[specialregs]:4 ptr;
+}
+
+TWOSRCDST: alu_2src_dst is alu_2src_dst & alu_2src_dst = 0x1e [ addrknown = 0; globalset(inst_next, addrknown); ] {
+  local ptr:1 = 4;
+  export *[specialregs]:4 ptr;
+}
+
+TWOSRCDST: alu_2src_dst is alu_2src_dst & alu_2src_dst = 0x1f & addrknown = 0 {
+  local ptr:1 = 8;
+  export *[specialregs]:4 ptr;
+}
+
+TWOSRCDST: alu_2src_dst is alu_2src_dst {
+  export alu_2src_dst;
+}
+
+
+ALUDST: TWOSRCDST is TWOSRCDST & opc = 0x13 { export TWOSRCDST; }
+
+ALUDST: ALUICNTLDST is ALUICNTLDST & opc != 0x13 { export ALUICNTLDST; }
+
+# -- Sources --
+
+macro readaddr(value) {
+# TODO: figure out a5xx behavior
+@if VERSION == "6"
+  local mem_read_addr:8 = MEM_READ_ADDR;
+  MEM_READ_ADDR = mem_read_addr + 4;
+  value = *[ram]:4 mem_read_addr;
+@else
+  local ptr:1 = 0;
+  value = *[specialregs]:4 ptr;
+@endif
+}
+
+macro readaddr2(value) {
+  local reg_read_addr = REG_READ_ADDR;
+  REG_READ_ADDR = reg_read_addr + 1;
+  value = *[gpu_register]:4 reg_read_addr;
+}
+
+# Note: in instructions with (rep), we have to suppress decrementing $rem here
+# because it's done already in the global outer loop
+
+macro readdata_rep(value) {
+  value = *[ram]:4 curpacketptr;
+  curpacketptr = curpacketptr + 4;
+}
+
+macro readdata_norep(value) {
+  rem = rem - 1;
+  readdata_rep(value);
+}
+
+SRC1: src1 is src1 & src1 = 0x0 { export 0:4; }
+
+SRC1: src1 is src1 & src1 = 0x1d {
+  local value:4;
+  readaddr(value);
+  export value;
+}
+
+SRC1: src1 is src1 & src1 = 0x1e {
+  local value:4;
+  readaddr2(value);
+  export value;
+}
+
+SRC1: src1 is src1 & src1 = 0x1f & isrepinstr = 0 {
+  local value:4;
+  readdata_norep(value);
+  export value;
+}
+
+SRC1: src1 is src1 & src1 = 0x1f & isrepinstr = 1 {
+  local value:4;
+  readdata_rep(value);
+  export value;
+}
+
+SRC1: src1 is src1 { export src1; }
+
+ALU2SRC2: alu_2src_src2 is alu_2src_src2 & alu_2src_src2 = 0x0 { export 0:4; }
+
+ALU2SRC2: alu_2src_src2 is alu_2src_src2 & alu_2src_src2 = 0x1d {
+  local value:4;
+  readaddr(value);
+  export value;
+}
+
+ALU2SRC2: alu_2src_src2 is alu_2src_src2 & alu_2src_src2 = 0x1e {
+  local value:4;
+  readaddr2(value);
+  export value;
+}
+
+ALU2SRC2: alu_2src_src2 is alu_2src_src2 & alu_2src_src2 = 0x1f & isrepinstr = 0 {
+  local value:4;
+  readdata_norep(value);
+  export value;
+}
+
+ALU2SRC2: alu_2src_src2 is alu_2src_src2 & alu_2src_src2 = 0x1f & isrepinstr = 1 {
+  local value:4;
+  readdata_rep(value);
+  export value;
+}
+
+ALU2SRC2: alu_2src_src2 is alu_2src_src2 { export alu_2src_src2; }
+
+CNTLDATASRC: control_data_src is control_data_src & control_data_src = 0x0 { export 0:4; }
+
+CNTLDATASRC: control_data_src is control_data_src & control_data_src = 0x1d {
+  local value:4;
+  readaddr(value);
+  export value;
+}
+
+CNTLDATASRC: control_data_src is control_data_src & control_data_src = 0x1e {
+  local value:4;
+  readaddr2(value);
+  export value;
+}
+
+CNTLDATASRC: control_data_src is control_data_src & control_data_src = 0x1f & isrepinstr = 0 {
+  local value:4;
+  readdata_norep(value);
+  export value;
+}
+
+CNTLDATASRC: control_data_src is control_data_src & control_data_src = 0x1f & isrepinstr = 1 {
+  local value:4;
+  readdata_rep(value);
+  export value;
+}
+
+CNTLDATASRC: control_data_src is control_data_src { export control_data_src; }
+
+ALUSRC2: ALU2SRC2 is ALU2SRC2 & opc = 0x13 { export ALU2SRC2; }
+
+ALUSRC2: alu_uimm is alu_uimm { local tmp:4 = alu_uimm; export tmp; }
+
+# --- Instructions --
+
+# special-case mov $addr, const where it's known what const does
+
+# setting registers
+repinstr: "mov" alui_control_dst, alu_uimm is alui_control_dst & alui_control_dst = 0x1d & opc = 0x11 &
+   alu_uimm & movi_shift = 0
+  [ addrknown = 1; knownaddr = alu_uimm; globalset(inst_next, addrknown); globalset(inst_next, knownaddr); ] { }
+
+# setting curdataptr_lo 
+repinstr: "mov" alui_control_dst, 0xa0 << 24 is alui_control_dst & alui_control_dst = 0x1d & opc = 0x11 &
+  alu_uimm = 0xa0 & movi_shift = 24
+  [ addrknown = 1; knownaddr = 0xa0 << 24; globalset(inst_next, addrknown); globalset(inst_next, knownaddr); ] { }
+
+# setting curdataptr_hi
+repinstr: "mov" alui_control_dst, 0xa1 << 24 is alui_control_dst & alui_control_dst = 0x1d & opc = 0x11 &
+  alu_uimm = 0xa1 & movi_shift = 24
+  [ addrknown = 1; knownaddr = 0xa1 << 24; globalset(inst_next, addrknown); globalset(inst_next, knownaddr); ] { }
+
+# storing to memory, unprotected (kernel)
+repinstr: "mov" alui_control_dst, 0xa2 << 24 is alui_control_dst & alui_control_dst = 0x1d & opc = 0x11 &
+  alu_uimm = 0xa2 & movi_shift = 24
+  [ addrknown = 1; knownaddr = 0xa2 << 24; globalset(inst_next, addrknown); globalset(inst_next, knownaddr); ] { }
+
+# storing to memory, protected (userspace)
+repinstr: "mov" alui_control_dst, 0xa204 << 16 is alui_control_dst & alui_control_dst = 0x1d & opc = 0x11 &
+  alu_uimm = 0xa204 & movi_shift = 16
+  [ addrknown = 1; knownaddr = 0xa204 << 16; globalset(inst_next, addrknown); globalset(inst_next, knownaddr); ] { }
+
+# generic mov constant
+
+repinstr: "mov" ALUICNTLDST, alu_uimm << movi_shift is ALUICNTLDST & alu_uimm & movi_shift & opc = 0x11 {
+  ALUICNTLDST = alu_uimm << movi_shift;
+}
+
+repinstr: "mov" ALUICNTLDST, alu_uimm is ALUICNTLDST & alu_uimm & movi_shift = 0 & opc = 0x11 {
+  ALUICNTLDST = alu_uimm;
+}
+
+# --- ALU instructions ---
+
+aluinstr: "add" ALUDST, SRC1, ALUSRC2 is ALUDST & SRC1 & ALUSRC2 & alu_op = 0x01 {
+  local tmp:4 = SRC1 + ALUSRC2;
+  flags[0,1] = carry(SRC1, ALUSRC2);
+  ALUDST = tmp;
+}
+
+aluinstr: "addhi" ALUDST, SRC1, ALUSRC2 is ALUDST & SRC1 & ALUSRC2 & alu_op = 0x02 {
+  ALUDST = SRC1 + ALUSRC2 + (flags & 1);
+}
+
+aluinstr: "sub" ALUDST, SRC1, ALUSRC2 is ALUDST & SRC1 & ALUSRC2 & alu_op = 0x03 {
+  local tmp:4 = SRC1 - ALUSRC2;
+  flags[0,1] = SRC1 < ALUSRC2;
+  ALUDST = tmp;
+}
+
+aluinstr: "subhi" ALUDST, SRC1, ALUSRC2 is ALUDST & SRC1 & ALUSRC2 & alu_op = 0x04 {
+  ALUDST = SRC1 - (ALUSRC2 + (flags & 1));
+}
+
+aluinstr: "and" ALUDST, SRC1, ALUSRC2 is ALUDST & SRC1 & ALUSRC2 & alu_op = 0x05 {
+  ALUDST = SRC1 & ALUSRC2;
+}
+
+aluinstr: "or" ALUDST, SRC1, ALUSRC2 is ALUDST & SRC1 & ALUSRC2 & alu_op = 0x06 {
+  ALUDST = SRC1 | ALUSRC2;
+}
+
+# or $dst, $00, $src -> mov $dst, $src
+aluinstr: "mov" ALUDST, ALUSRC2 is ALUDST & src1 = 0 & ALUSRC2 & alu_op = 0x06 {
+  ALUDST = ALUSRC2;
+}
+
+aluinstr: "xor" ALUDST, SRC1, ALUSRC2 is ALUDST & SRC1 & ALUSRC2 & alu_op = 0x07 {
+  ALUDST = SRC1 ^ ALUSRC2;
+}
+
+aluinstr: "not" ALUDST, ALUSRC2 is ALUDST & SRC1 & ALUSRC2 & alu_op = 0x08 {
+  ALUDST = ~ALUSRC2;
+}
+
+aluinstr: "shl" ALUDST, SRC1, ALUSRC2 is ALUDST & SRC1 & ALUSRC2 & alu_op = 0x09 {
+  ALUDST = SRC1 << ALUSRC2;
+}
+
+aluinstr: "ushr" ALUDST, SRC1, ALUSRC2 is ALUDST & SRC1 & ALUSRC2 & alu_op = 0x0a {
+  ALUDST = SRC1 >> ALUSRC2;
+}
+
+aluinstr: "ishr" ALUDST, SRC1, ALUSRC2 is ALUDST & SRC1 & ALUSRC2 & alu_op = 0x0b {
+  ALUDST = SRC1 s>> ALUSRC2;
+}
+
+aluinstr: "rot" ALUDST, SRC1, ALUSRC2 is ALUDST & SRC1 & ALUSRC2 & alu_op = 0x0c {
+  ALUDST = (SRC1 << ALUSRC2) | (SRC1 >> (32 - ALUSRC2));
+}
+
+aluinstr: "mul8" ALUDST, SRC1, ALUSRC2 is ALUDST & SRC1 & ALUSRC2 & alu_op = 0x0d {
+  local _src1:1 = SRC1(0);
+  local _src2:1 = ALUSRC2(0);
+  local src1_ext:2 = zext(_src1);
+  local src2_ext:2 = zext(_src2);
+  local tmp:2 = src1_ext * src2_ext;
+  ALUDST = zext(tmp);
+}
+
+aluinstr: "min" ALUDST, SRC1, ALUSRC2 is ALUDST & SRC1 & ALUSRC2 & alu_op = 0x0e {
+  local tmp = SRC1;
+  if (tmp < ALUSRC2) goto <out>;
+  tmp = ALUSRC2;
+  <out>
+  ALUDST = tmp;
+}
+
+aluinstr: "max" ALUDST, SRC1, ALUSRC2 is ALUDST & SRC1 & ALUSRC2 & alu_op = 0x0f {
+  local tmp = SRC1;
+  if (tmp > ALUSRC2) goto <out>;
+  tmp = ALUSRC2;
+  <out>
+  ALUDST = tmp;
+}
+
+aluinstr: "cmp" ALUDST, SRC1, ALUSRC2 is ALUDST & SRC1 & ALUSRC2 & alu_op = 0x10 {
+  local tmp:4 = 0x00;
+  if (SRC1 > ALUSRC2) goto <out>;
+  tmp = 0x2b;
+  if (SRC1 == ALUSRC2) goto <out>;
+  tmp = 0x1e;
+  <out>
+  ALUDST = tmp;
+}
+
+define pcodeop alu14;
+
+# TODO: figure out what this does and rename
+# probably log2 (find highest one bit) or ctz
+aluinstr: "alu14" ALUDST, ALUSRC2 is ALUDST & src1 = 0 & ALUSRC2 & alu_op = 0x14 {
+  ALUDST = alu14(ALUSRC2);
+}
+
+repinstr: aluinstr is aluinstr & opc = 0x13 & alu_2src_op & alu_2src_pad = 0 [ alu_op = alu_2src_op; ] { }
+
+repinstr: "(rep2)" aluinstr is aluinstr & opc = 0x13 & alu_2src_op & rep = 0 & alu_2src_pad = 0x10 [ alu_op = alu_2src_op; ] {
+  local cntr:1 = 0;
+  <start>
+  build aluinstr;
+  cntr = cntr + 1;
+  if (cntr != 2) goto <start>;
+}
+
+# TODO: figure out what this does
+repinstr: "(pad="alu_2src_pad")" aluinstr is aluinstr & opc = 0x13 & alu_2src_op & alu_2src_pad [ alu_op = alu_2src_op; ] { }
+
+repinstr: aluinstr is aluinstr & opc [ alu_op = opc; ] { }
+
+# --- Control instructions ---
+
+CNTLADDR: [ SRC1 + control_imm ], control_flags is SRC1 & control_imm & control_flags {
+  local tmp:4 = SRC1 + control_imm;
+  export *[control_register]:4 tmp;
+}
+
+CNTLADDR: [ SRC1 + control_imm ] is SRC1 & control_imm & control_flags = 0 {
+  local tmp:4 = SRC1 + control_imm;
+  export *[control_register]:4 tmp;
+}
+
+# TODO: verify this on hardware.
+# TODO: support special registers for src1. I think the firmware always uses a
+# generic register like $02 here, since e.g. $00 would be useless.
+CNTLADDR: [ src1 += control_imm ] is src1 & control_imm & control_flags = 4 {
+  local tmp:4 = src1 + control_imm;
+  src1 = tmp;
+  export *[control_register]:4 tmp;
+}
+
+repinstr: "cwrite" CNTLDATASRC, CNTLADDR is CNTLDATASRC & CNTLADDR & opc = 0x15 {
+  CNTLADDR = CNTLDATASRC;
+}
+
+# Implement special semantics for known writes to control registers that
+# actually trigger other writes.
+
+@if VERSION == "6"
+repinstr: "cwrite" CNTLDATASRC, [ src1 + "REG_WRITE" ] is CNTLDATASRC & src1 & src1 = 0 & control_imm = 0x025 & opc = 0x15 {
+  # read address from REG_WRITE_ADDR and post-increment
+  local reg:4 = REG_WRITE_ADDR;
+  REG_WRITE_ADDR = reg + 1;
+  *[gpu_register]:4 reg = CNTLDATASRC;
+}
+@endif
+
+repinstr: "cread" ALUICNTLDST, CNTLADDR is ALUICNTLDST & CNTLADDR &
+@if VERSION == "5"
+opc = 0x16
+@else
+opc = 0x17
+@endif
+{
+  ALUICNTLDST = CNTLADDR;
+}
+
+@if VERSION == "6"
+LDSTADDR: [ SRC1 + control_imm ], control_flags is SRC1 & control_imm & control_flags {
+  local ptr:8 = zext(SRC1) | (zext(LOAD_STORE_HI) << 32);
+  local tmp:8 = ptr + control_imm;
+  export *[ram]:4 tmp;
+}
+
+LDSTADDR: [ SRC1 + control_imm ] is SRC1 & control_imm & control_flags = 0 {
+  local ptr:8 = zext(SRC1) | (zext(LOAD_STORE_HI) << 32);
+  local tmp:8 = ptr + control_imm;
+  export *[ram]:4 tmp;
+}
+
+LDSTADDR: [ src1 += control_imm ] is src1 & control_imm & control_flags = 4 {
+  local ptr:8 = zext(src1) | (zext(LOAD_STORE_HI) << 32);
+  local tmp:8 = ptr + control_imm;
+  src1 = tmp[0,32];
+  LOAD_STORE_HI = tmp[32,32];
+  export *[ram]:4 tmp;
+}
+
+repinstr: "store" CNTLDATASRC, LDSTADDR is CNTLDATASRC & LDSTADDR & opc = 0x14 {
+  LDSTADDR = CNTLDATASRC;
+}
+
+repinstr: "load" ALUICNTLDST, LDSTADDR is ALUICNTLDST & LDSTADDR & opc = 0x16 {
+  ALUICNTLDST = LDSTADDR;
+}
+@endif
+
+:^repinstr is repinstr & rep = 0 [ isrepinstr = 0; ] { }
+
+:"(rep)" repinstr is repinstr & rep = 1 [ isrepinstr = 1; ] {
+  <repstart>
+  if (rem == 0) goto <repend>;
+  build repinstr;
+  rem = rem - 1;
+  goto <repstart>;
+  <repend>
+}
+
+# --- Control-flow instructions ---
+
+branch_dest: reloc is branch_ioff [ reloc = branch_ioff * 4 + inst_start; ] {
+  export *:8 reloc;
+}
+
+:brne SRC1, branch_imm, branch_dest is SRC1 & branch_imm & branch_dest & opc_r = 0x30 {
+  local tmp:4 = SRC1;
+  delayslot(1);
+  if (tmp != branch_imm) goto branch_dest;
+}
+
+:breq SRC1, branch_imm, branch_dest is SRC1 & branch_imm & branch_dest & opc_r = 0x31 {
+  local tmp:4 = SRC1;
+  delayslot(1);
+  if (tmp == branch_imm) goto branch_dest;
+}
+
+:brne SRC1, "b"^branch_bit, branch_dest is SRC1 & branch_bit & branch_dest & opc_r = 0x32 {
+  local tmp:4 = SRC1;
+  delayslot(1);
+  if ((tmp & (1 << branch_bit)) == 0) goto branch_dest;
+}
+
+:breq SRC1, "b"^branch_bit, branch_dest is SRC1 & branch_bit & branch_dest & opc_r = 0x33 {
+  local tmp:4 = SRC1;
+  delayslot(1);
+  if ((tmp & (1 << branch_bit)) != 0) goto branch_dest;
+}
+
+:jump branch_dest is branch_dest & src1 = 0 & branch_bit = 0 & opc_r = 0x32 {
+  delayslot(1);
+  goto branch_dest;
+}
+
+# + 4 for zero stripped off by kernel
+call_dest: reloc is call_off [ reloc = call_off * 4 + 4; ] {
+  export *:8 reloc;
+}
+
+:call call_dest is call_dest & opc_r = 0x35 {
+  *[retaddrs]:4 sp = inst_next + 4;
+  sp = sp + 4;
+  delayslot(1);
+  call call_dest;
+}
+
+:ret is opc_r = 0x34 & pad = 0 {
+  sp = sp - 4;
+  local tmp:4 = *[retaddrs] sp;
+  delayslot(1);
+  return [tmp];
+}
+
+# we don't know exactly how this works, but this is how the preempt routine exits
+define pcodeop iret;
+
+:iret is opc_r = 0x34 & pad = 0x2000000 {
+  delayslot(1);
+  local tmp:8 = iret();
+  return [tmp];
+}
+
+define pcodeop waitin;
+
+:waitin is opc_r = 0x36 & pad = 0x0 {
+  local tmp:8 = waitin();
+  delayslot(1);
+  return [tmp];
+}
+
+# Annoyingly, this seems to work slightly differently on A5xx. Compare the
+# implementations of CP_SET_SECURE.
+
+@if VERSION == "6"
+define pcodeop toggle_secure;
+
+togglesecure_dest: reloc is epsilon [ reloc = inst_next + 8; ] {
+  export *:8 reloc;
+}
+
+:togglesecure togglesecure_dest is togglesecure_dest & opc_r = 0x3b & pad = 0x0 {
+  local result:1 = toggle_secure();
+  # Skip the next two instructions if successful. Usually this contains a jump
+  # to some infinite loop.
+  if (result) goto togglesecure_dest;
+}
+
+define pcodeop unk38;
+
+# Seen in the interrupt routine. The padding looks like it's an absolute
+# destination (like calls), and points to a sequence that ends in "iret". The
+# fallthrough ends in "waitin; mov $01, data" like a normal packet handler...
+# my guess is that this switches it out of interrupt context like what "iret"
+# does so that it can keep on processing packets, but only when safe and jumps
+# when not safe?
+:unk38 call_dest is call_dest & opc_r = 0x38 {
+  local tmp:1 = unk38();
+  delayslot(1);
+  if (tmp) goto call_dest;
+}
+@endif
+
+@if VERSION == "5"
+:nop is opc_r = 0x0 & pad = 0x0 { }
+:nop [pad] is opc_r = 0x0 & pad { }
+@else
+:nop is opc_r = 0x0 & pad = 0x1000000 { }
+:nop [pad] is opc_r = 0x0 & pad { }
+@endif
+

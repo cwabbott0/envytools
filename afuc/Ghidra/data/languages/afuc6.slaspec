@@ -1,0 +1,3 @@
+@define VERSION "6"
+
+@include "afuc.sinc"

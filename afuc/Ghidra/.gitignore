@@ -1,0 +1,7 @@
+*.sla
+.classpath
+.project
+.settings/
+build/
+bin/
+data/build.xml

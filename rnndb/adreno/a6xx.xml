@@ -2522,6 +2522,12 @@ to upconvert to 32b float internally?
 		(and blob always puts psize at highest OUTLOC)
 		 -->
 		<bitfield name="PSIZELOC" low="16" high="23" type="uint"/>
+		<!--
+		The number of extra copies of POSITION, i.e. number of
+		views minus one when multi-position output is enabled,
+		otherwise 0.
+		-->
+		<bitfield name="EXTRAPOS" low="24" high="26" type="uint"/>
 	</reg32>
 
 	<reg32 offset="0x9302" name="VPC_PACK_GS">
@@ -2559,7 +2565,7 @@ to upconvert to 32b float internally?
 		<!-- for fixed-function (i.e. no GS) gl_PrimitiveID in FS -->
 		<bitfield name="PRIMIDLOC" low="8" high="15" type="uint"/>
 		<bitfield name="VARYING" pos="16" type="boolean"/>
-		<bitfield name="UNKLOC" low="24" high="31" type="uint"/>
+		<bitfield name="VIEWIDLOC" low="24" high="31" type="uint"/>
 	</reg32>
 
 	<reg32 offset="0x9305" name="VPC_SO_BUF_CNTL">
@@ -2683,7 +2689,21 @@ to upconvert to 32b float internally?
 		<bitfield name="STRIDE_IN_VPC" low="0" high="8" type="uint"/>
 	</reg32>
 
-	<reg32 offset="0x9b07" name="PC_UNKNOWN_9B07"/>
+	<bitset name="a6xx_multiview_cntl">
+		<bitfield name="ENABLE" pos="0" type="boolean"/>
+		<doc>
+			Multi-position output lets the last geometry stage
+			shader write multiple copies of gl_Position. If
+			disabled then the VS is run once for each view, and
+			ViewID is passed as a register to the VS.
+		</doc>
+		<bitfield name="DISABLEMULTIPOS" pos="1" type="boolean"/>
+		<bitfield name="VIEWS" low="2" high="5" type="uint"/>
+	</bitset>
+
+	<reg32 offset="0x9b07" name="PC_MULTIVIEW_CNTL" type="a6xx_multiview_cntl"/>
+	<!-- mask of enabled views -->
+	<reg32 offset="0x9b08" name="PC_MULTIVIEW_MASK" type="hex"/>
 
 	<reg32 offset="0x9e08" name="PC_TESSFACTOR_ADDR_LO"/>
 	<reg32 offset="0x9e09" name="PC_TESSFACTOR_ADDR_HI"/>
@@ -2709,6 +2729,7 @@ to upconvert to 32b float internally?
 		<bitfield name="REGID4VTX" low="0" high="7" type="a3xx_regid"/>
 		<bitfield name="REGID4INST" low="8" high="15" type="a3xx_regid"/>
 		<bitfield name="REGID4PRIMID" low="16" high="23" type="a3xx_regid"/>
+		<bitfield name="REGID4VIEWID" low="24" high="31" type="a3xx_regid"/>
 	</reg32>
 	<reg32 offset="0xa002" name="VFD_CONTROL_2">
 		<bitfield name="REGID_HSPATCHID" low="0" high="7" type="a3xx_regid"/>
@@ -2737,8 +2758,7 @@ to upconvert to 32b float internally?
 		<bitfield name="BINNING_PASS" pos="0" type="boolean"/>
 	</reg32>
 
-	<!-- always 0x0 ? -->
-	<reg32 offset="0xa008" name="VFD_UNKNOWN_A008"/>
+	<reg32 offset="0xa008" name="VFD_MULTIVIEW_CNTL" type="a6xx_multiview_cntl"/>
 	<reg32 offset="0xa009" name="VFD_ADD_OFFSET">
 		<!-- add VFD_INDEX_OFFSET to REGID4VTX -->
 		<bitfield name="VERTEX" pos="0" type="boolean"/>

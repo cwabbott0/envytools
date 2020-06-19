@@ -51,7 +51,7 @@ typedef enum {
 	OPC_AND    = 0x05,  /* AND immediate */
 	OPC_OR     = 0x06,  /* OR immediate */
 	OPC_XOR    = 0x07,  /* XOR immediate */
-	OPC_NOT    = 0x08,  /* bitwise not of immed (src ignored */
+	OPC_NOT    = 0x08,  /* bitwise not of immed (src1 ignored) */
 	OPC_SHL    = 0x09,  /* shift-left immediate */
 	OPC_USHR   = 0x0a,  /* unsigned shift right by immediate */
 	OPC_ISHR   = 0x0b,  /* signed shift right by immediate */
@@ -61,6 +61,12 @@ typedef enum {
 	OPC_MAX    = 0x0f,
 	OPC_CMP    = 0x10,  /* compare src to immed */
 	OPC_MOVI   = 0x11,  /* move immediate */
+
+	/* Return the most-significant bit of src2, or 0 if src2 == 0 (the
+	 * same as if src2 == 1). src1 is ignored. Note that this overlaps
+	 * with STORE6, so it can only be used with the two-source encoding.
+	 */
+	OPC_MSB    = 0x14,
 
 
 	OPC_ALU    = 0x13,  /* ALU instruction with two src registers */

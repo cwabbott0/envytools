@@ -149,6 +149,8 @@ static void print_alu_name(afuc_opc opc, uint32_t instr)
 		printf("max ");
 	} else if (opc == OPC_CMP) {
 		printf("cmp ");
+	} else if (opc == OPC_MSB) {
+		printf("msb ");
 	} else {
 		printerr("[%08x]", instr);
 		printf("  ; alu%02x ", opc);
@@ -502,7 +504,7 @@ static void disasm(uint32_t *buf, int sizedwords)
 		case OPC_ALU: {
 			bool src1 = true;
 
-			if (instr->alu.alu == OPC_NOT)
+			if (instr->alu.alu == OPC_NOT || instr->alu.alu == OPC_MSB)
 				src1 = false;
 
 			if (instr->alu.pad)

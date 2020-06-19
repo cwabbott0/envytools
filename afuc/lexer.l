@@ -66,6 +66,7 @@ extern YYSTYPE yylval;
 "min"                             return TOKEN(T_OP_MIN);
 "max"                             return TOKEN(T_OP_MAX);
 "cmp"                             return TOKEN(T_OP_CMP);
+"msb"                             return TOKEN(T_OP_MSB);
 "mov"                             return TOKEN(T_OP_MOV);
 "cwrite"                          return TOKEN(T_OP_CWRITE);
 "cread"                           return TOKEN(T_OP_CREAD);

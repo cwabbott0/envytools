@@ -152,6 +152,7 @@ static void print_token(FILE *file, int type, YYSTYPE value)
 %token <tok> T_OP_MIN
 %token <tok> T_OP_MAX
 %token <tok> T_OP_CMP
+%token <tok> T_OP_MSB
 %token <tok> T_OP_MOV
 %token <tok> T_OP_CWRITE
 %token <tok> T_OP_CREAD
@@ -189,9 +190,14 @@ instr_or_label:    instr_r
 instr_r:           alu_instr
 |                  config_instr
 
-/* need to special case not (since src) and mov (single src, plus possibly a shift)
+/* need to special case:
+ * - not (single src, possibly an immediate)
+ * - msb (single src, must be reg)
+ * - mov (single src, plus possibly a shift)
  * from the other ALU instructions:
  */
+
+alu_msb_instr:     T_OP_MSB reg ',' reg        { new_instr($1); dst($2); src2($4); }
 
 alu_not_instr:     T_OP_NOT reg ',' reg        { new_instr($1); dst($2); src2($4); }
 |                  T_OP_NOT reg ',' immediate  { new_instr($1); dst($2); immed($4); }
@@ -226,6 +232,7 @@ alu_2src_instr:    alu_2src_op reg ',' reg ',' reg { dst($2); src1($4); src2($6)
 |                  alu_2src_op reg ',' reg ',' immediate { dst($2); src1($4); immed($6); }
 
 alu_instr:         alu_2src_instr
+|                  alu_msb_instr
 |                  alu_not_instr
 |                  alu_mov_instr
 

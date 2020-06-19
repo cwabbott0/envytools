@@ -107,6 +107,7 @@ static afuc_opc tok2alu(int tok)
 	case T_OP_MIN:   return OPC_MIN;
 	case T_OP_MAX:   return OPC_MAX;
 	case T_OP_CMP:   return OPC_CMP;
+	case T_OP_MSB:   return OPC_MSB;
 	default:
 		assert(0);
 		return -1;
@@ -164,7 +165,10 @@ static void emit_instructions(int outfd)
 		case T_OP_MIN:
 		case T_OP_MAX:
 		case T_OP_CMP:
+		case T_OP_MSB:
 			if (ai->has_immed) {
+				/* MSB overlaps with STORE */
+				assert(ai->tok != T_OP_MSB);
 				opc = tok2alu(ai->tok);
 				instr.alui.dst = ai->dst;
 				instr.alui.src = ai->src1;
